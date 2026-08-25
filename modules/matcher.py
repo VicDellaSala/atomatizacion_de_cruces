@@ -1,4 +1,5 @@
 import re
+
 from difflib import SequenceMatcher
 
 from modules.excel_reader import (
@@ -8,19 +9,17 @@ from modules.excel_reader import (
 
 
 # =========================================================
-# NORMALIZACIÓN
+# NORMALIZACION
 # =========================================================
 
 def limpiar_para_busqueda(texto):
     """
-    Convierte texto a mayúsculas y elimina
-    espacios, guiones y símbolos.
-
-    Ejemplo:
-    J-50405638-3 -> J504056383
+    Mayusculas + solo letras y numeros.
     """
 
-    texto = normalizar_texto(texto)
+    texto = normalizar_texto(
+        texto
+    )
 
     return re.sub(
         r"[^A-Z0-9]",
@@ -29,277 +28,367 @@ def limpiar_para_busqueda(texto):
     )
 
 
-def normalizar_serial(valor):
+def valor_aparece(valor, texto):
     """
-    Normaliza un serial.
-    """
-
-    return limpiar_para_busqueda(valor)
-
-
-def valor_aparece(valor, texto_limpio):
-    """
-    Busca un valor dentro del texto OCR.
+    Coincidencia exacta normalizada.
     """
 
-    valor = limpiar_para_busqueda(valor)
+    valor = limpiar_para_busqueda(
+        valor
+    )
+
+    texto = limpiar_para_busqueda(
+        texto
+    )
 
     if not valor:
         return False
 
-    # Evita buscar valores demasiado pequeños
     if len(valor) < 5:
         return False
 
-    return valor in texto_limpio
+    return valor in texto
 
 
 # =========================================================
-# SERIAL
+# CONTEXTO DEL CLIENTE
 # =========================================================
 
-def similitud_serial(serial_excel, texto_documento):
+def obtener_contexto(candidatos):
     """
-    Busca el serial del Excel dentro del documento.
-
-    1. Intenta coincidencia exacta.
-    2. Si falla, permite una pequeña diferencia OCR.
+    Obtiene RIF, afiliado y razon social
+    compartidos por las terminales candidatas.
     """
 
-    serial = normalizar_serial(
-        serial_excel
-    )
+    contexto = {
+        "RIF": "",
+        "AFILIADO": "",
+        "RAZON SOCIAL": "",
+    }
 
-    texto = limpiar_para_busqueda(
-        texto_documento
-    )
+    if candidatos.empty:
+        return contexto
 
-    if not serial:
-        return 0.0
+    for columna in contexto.keys():
 
-    # Coincidencia exacta
-    if serial in texto:
-        return 1.0
-
-    # Serial demasiado corto
-    if len(serial) < 8:
-        return 0.0
-
-    longitud = len(serial)
-
-    mejor_similitud = 0.0
-
-    # Buscar fragmentos del mismo tamaño
-    for posicion in range(
-        max(
-            1,
-            len(texto) - longitud + 1
-        )
-    ):
-
-        fragmento = texto[
-            posicion:
-            posicion + longitud
-        ]
-
-        if len(fragmento) != longitud:
+        if columna not in candidatos.columns:
             continue
 
-        similitud = SequenceMatcher(
-            None,
-            serial,
-            fragmento
-        ).ratio()
+        valores = (
+            candidatos[columna]
+            .apply(normalizar_texto)
+        )
 
-        if similitud > mejor_similitud:
-            mejor_similitud = similitud
+        valores = [
+            valor
+            for valor in valores
+            if valor
+        ]
 
-        if mejor_similitud >= 0.98:
-            break
+        valores_unicos = list(
+            dict.fromkeys(
+                valores
+            )
+        )
 
-    return mejor_similitud
+        if len(valores_unicos) == 1:
+
+            contexto[columna] = (
+                valores_unicos[0]
+            )
+
+        elif len(valores_unicos) > 1:
+
+            contexto[columna] = "VARIOS"
+
+    return contexto
 
 
 # =========================================================
-# EVALUAR FILA
+# SERIAL EXACTO
 # =========================================================
 
-def evaluar_fila(
-    fila,
+def buscar_serial_exacto(
+    contratos,
     texto_documento,
     nombre_archivo=""
 ):
     """
-    Evalúa una terminal específica del Excel.
-
-    PRIORIDAD:
-    SERIAL > AFILIADO > RIF > PEDIDO/FACTURA
+    Busca serial completo exacto.
     """
 
     texto_total = (
         str(nombre_archivo)
-        + "\n"
+        + " "
         + str(texto_documento)
     )
 
-    texto_limpio = limpiar_para_busqueda(
-        texto_total
-    )
+    encontrados = []
 
-    coincidencias = []
-
-    puntos = 0
-
-    serial_encontrado = False
-    serial_similitud = 0.0
-
-    rif_encontrado = False
-    afiliado_encontrado = False
-
-
-    # =====================================================
-    # SERIAL POS
-    # =====================================================
-
-    if "SERIAL" in fila.index:
+    for indice, fila in contratos.iterrows():
 
         serial = fila.get(
             "SERIAL",
             ""
         )
 
-        serial_similitud = similitud_serial(
+        if valor_aparece(
             serial,
             texto_total
-        )
-
-        # Serial exacto
-        if serial_similitud == 1.0:
-
-            coincidencias.append(
-                "SERIAL EXACTO"
-            )
-
-            puntos += 100
-
-            serial_encontrado = True
-
-        # Serial bastante parecido
-        elif serial_similitud >= 0.90:
-
-            coincidencias.append(
-                "SERIAL POSIBLE"
-            )
-
-            puntos += 75
-
-            serial_encontrado = True
-
-
-    # =====================================================
-    # AFILIADO
-    # =====================================================
-
-    if "AFILIADO" in fila.index:
-
-        afiliado = fila.get(
-            "AFILIADO",
-            ""
-        )
-
-        if valor_aparece(
-            afiliado,
-            texto_limpio
         ):
 
-            coincidencias.append(
-                "AFILIADO"
+            encontrados.append(
+                indice
             )
 
-            puntos += 30
-
-            afiliado_encontrado = True
+    return encontrados
 
 
-    # =====================================================
-    # RIF
-    # =====================================================
+# =========================================================
+# BUSCAR RIF
+# =========================================================
 
-    if "RIF" in fila.index:
+def buscar_rifs(
+    contratos,
+    texto_documento,
+    nombre_archivo
+):
+    """
+    Busca el RIF dentro del texto OCR
+    y tambien dentro del nombre del archivo.
+    """
 
-        rif = fila.get(
-            "RIF",
-            ""
+    texto_total = (
+        str(nombre_archivo)
+        + " "
+        + str(texto_documento)
+    )
+
+    encontrados = []
+
+    if "RIF" not in contratos.columns:
+        return []
+
+    for rif in contratos["RIF"]:
+
+        rif = normalizar_texto(
+            rif
         )
+
+        if not rif:
+            continue
 
         if valor_aparece(
             rif,
-            texto_limpio
+            texto_total
         ):
 
-            coincidencias.append(
-                "RIF"
+            if rif not in encontrados:
+
+                encontrados.append(
+                    rif
+                )
+
+    return encontrados
+
+
+# =========================================================
+# ULTIMOS DIGITOS DEL SERIAL
+# =========================================================
+
+def buscar_final_serial(
+    candidatos,
+    texto_documento
+):
+    """
+    Intenta distinguir terminal usando:
+    - ultimos 8
+    - 7
+    - 6
+    - 5
+    - 4 caracteres
+
+    Solo acepta cuando UNA sola terminal coincide.
+    """
+
+    texto = limpiar_para_busqueda(
+        texto_documento
+    )
+
+    for cantidad in [
+        8,
+        7,
+        6,
+        5,
+        4,
+    ]:
+
+        encontrados = []
+
+        for indice, fila in candidatos.iterrows():
+
+            serial = limpiar_para_busqueda(
+                fila.get(
+                    "SERIAL",
+                    ""
+                )
             )
 
-            puntos += 20
+            if len(serial) < cantidad:
+                continue
 
-            rif_encontrado = True
+            final = serial[
+                -cantidad:
+            ]
+
+            if final in texto:
+
+                encontrados.append(
+                    indice
+                )
+
+        if len(encontrados) == 1:
+
+            return {
+                "indice": encontrados[0],
+                "cantidad": cantidad,
+            }
+
+    return None
 
 
-    # =====================================================
-    # PEDIDO
-    # =====================================================
+# =========================================================
+# SERIAL APROXIMADO
+# =========================================================
 
-    if "PEDIDO" in fila.index:
+def similitud_serial(
+    serial,
+    texto_documento
+):
+    """
+    Busca una version aproximada del serial
+    dentro del OCR especial.
 
-        pedido = fila.get(
-            "PEDIDO",
+    Solo se utiliza despues de haber reducido
+    candidatos por RIF.
+    """
+
+    serial = limpiar_para_busqueda(
+        serial
+    )
+
+    texto = limpiar_para_busqueda(
+        texto_documento
+    )
+
+    if len(serial) < 8:
+        return 0.0
+
+    if len(texto) < 8:
+        return 0.0
+
+    mejor = 0.0
+
+    # Comparar distintas longitudes porque OCR
+    # puede perder uno o dos caracteres.
+    for longitud in [
+        len(serial),
+        len(serial) - 1,
+        len(serial) - 2,
+    ]:
+
+        if longitud < 6:
+            continue
+
+        if len(texto) < longitud:
+            continue
+
+        for posicion in range(
+            len(texto) - longitud + 1
+        ):
+
+            fragmento = texto[
+                posicion:
+                posicion + longitud
+            ]
+
+            similitud = SequenceMatcher(
+                None,
+                serial,
+                fragmento
+            ).ratio()
+
+            if similitud > mejor:
+
+                mejor = similitud
+
+    return mejor
+
+
+def buscar_serial_probable(
+    candidatos,
+    texto_documento
+):
+    """
+    Busca el serial mas probable dentro
+    de las terminales del mismo RIF.
+
+    Solo devuelve candidato cuando existe
+    diferencia clara contra el segundo mejor.
+    """
+
+    resultados = []
+
+    for indice, fila in candidatos.iterrows():
+
+        serial = fila.get(
+            "SERIAL",
             ""
         )
 
-        if valor_aparece(
-            pedido,
-            texto_limpio
-        ):
-
-            coincidencias.append(
-                "PEDIDO"
-            )
-
-            puntos += 20
-
-
-    # =====================================================
-    # FACTURA
-    # =====================================================
-
-    if "FACTURA" in fila.index:
-
-        factura = fila.get(
-            "FACTURA",
-            ""
+        similitud = similitud_serial(
+            serial,
+            texto_documento
         )
 
-        if valor_aparece(
-            factura,
-            texto_limpio
-        ):
+        resultados.append(
+            {
+                "indice": indice,
+                "similitud": similitud,
+            }
+        )
 
-            coincidencias.append(
-                "FACTURA"
-            )
+    resultados = sorted(
+        resultados,
+        key=lambda item: item["similitud"],
+        reverse=True,
+    )
 
-            puntos += 20
+    if not resultados:
+        return None
 
+    mejor = resultados[0]
 
-    return {
-        "puntos": puntos,
-        "coincidencias": coincidencias,
-        "serial_encontrado": serial_encontrado,
-        "serial_similitud": serial_similitud,
-        "rif_encontrado": rif_encontrado,
-        "afiliado_encontrado": afiliado_encontrado,
-    }
+    segunda = (
+        resultados[1]["similitud"]
+        if len(resultados) > 1
+        else 0
+    )
+
+    # Necesitamos una lectura razonable
+    if mejor["similitud"] < 0.78:
+
+        return None
+
+    # Y que sea claramente mejor
+    if (
+        mejor["similitud"]
+        - segunda
+    ) < 0.035:
+
+        return None
+
+    return mejor
 
 
 # =========================================================
@@ -309,191 +398,271 @@ def evaluar_fila(
 def buscar_mejor_coincidencia(
     df,
     texto_documento,
-    nombre_archivo
+    nombre_archivo,
+    segundo_intento=False,
 ):
     """
-    Busca la terminal correcta.
+    Flujo:
 
-    REGLAS:
+    PRIMER INTENTO:
+    1. Serial exacto
+    2. RIF
+    3. RIF unico -> encontrado
+    4. RIF repetido -> pedir segundo OCR
 
-    1. SERIAL exacto tiene máxima prioridad.
-    2. SERIAL parecido requiere revisión.
-    3. AFILIADO puede identificar el contrato.
-    4. RIF puede identificarlo SOLO si ese RIF
-       corresponde a una única terminal.
-    5. Si el mismo RIF tiene varias terminales y
-       no encontramos serial, NO inventamos cuál es.
+    SEGUNDO INTENTO:
+    5. Serial exacto
+    6. Ultimos caracteres
+    7. Serial probable
+    8. Si falla -> revisar sin inventar serial
     """
 
     contratos = obtener_contratos_reales(
         df
     )
 
-    candidatos = []
-
-    for indice, fila in contratos.iterrows():
-
-        resultado = evaluar_fila(
-            fila,
-            texto_documento,
-            nombre_archivo
-        )
-
-        candidatos.append(
-            {
-                "indice": indice,
-                **resultado,
-            }
-        )
-
-
     # =====================================================
-    # 1. SERIAL
+    # 1. SERIAL EXACTO
     # =====================================================
 
-    candidatos_serial = [
-        candidato
-        for candidato in candidatos
-        if candidato["serial_encontrado"]
-    ]
+    seriales = buscar_serial_exacto(
+        contratos,
+        texto_documento,
+        nombre_archivo,
+    )
 
-    if candidatos_serial:
+    if len(seriales) == 1:
 
-        mejor = max(
-            candidatos_serial,
-            key=lambda x: (
-                x["serial_similitud"],
-                x["puntos"]
-            )
-        )
+        indice = seriales[0]
 
-        if mejor["serial_similitud"] == 1.0:
-
-            estado = "ENCONTRADO"
-
-        else:
-
-            estado = "REVISAR"
-
-        return {
-            "estado": estado,
-            "puntos": mejor["puntos"],
-            "indice": mejor["indice"],
-            "coincidencias":
-                mejor["coincidencias"],
-            "serial_similitud":
-                mejor["serial_similitud"],
-        }
-
-
-    # =====================================================
-    # 2. AFILIADO
-    # =====================================================
-
-    candidatos_afiliado = [
-        candidato
-        for candidato in candidatos
-        if candidato["afiliado_encontrado"]
-    ]
-
-    # Si solamente una terminal coincide con el afiliado
-    if len(candidatos_afiliado) == 1:
-
-        mejor = candidatos_afiliado[0]
+        fila = contratos.loc[
+            indice
+        ]
 
         return {
             "estado": "ENCONTRADO",
-            "puntos": mejor["puntos"],
-            "indice": mejor["indice"],
-            "coincidencias":
-                mejor["coincidencias"],
-            "serial_similitud": 0,
+            "puntos": 100,
+            "indice": indice,
+            "coincidencias": [
+                "SERIAL EXACTO"
+            ],
+            "requiere_ocr_serial": False,
+            "contexto": {
+                "RIF": normalizar_texto(
+                    fila.get(
+                        "RIF",
+                        ""
+                    )
+                ),
+                "AFILIADO": normalizar_texto(
+                    fila.get(
+                        "AFILIADO",
+                        ""
+                    )
+                ),
+                "RAZON SOCIAL": normalizar_texto(
+                    fila.get(
+                        "RAZON SOCIAL",
+                        ""
+                    )
+                ),
+            },
         }
 
-    # Si hay varias terminales con mismo afiliado
-    if len(candidatos_afiliado) > 1:
+    # =====================================================
+    # 2. BUSCAR RIF
+    # =====================================================
 
-        mejor = max(
-            candidatos_afiliado,
-            key=lambda x: x["puntos"]
+    rifs = buscar_rifs(
+        contratos,
+        texto_documento,
+        nombre_archivo,
+    )
+
+    if len(rifs) == 0:
+
+        return {
+            "estado": "NO ENCONTRADO",
+            "puntos": 0,
+            "indice": None,
+            "coincidencias": [],
+            "requiere_ocr_serial": False,
+            "contexto": {
+                "RIF": "",
+                "AFILIADO": "",
+                "RAZON SOCIAL": "",
+            },
+        }
+
+    if len(rifs) > 1:
+
+        return {
+            "estado": "REVISAR",
+            "puntos": 10,
+            "indice": None,
+            "coincidencias": [
+                "VARIOS RIF DETECTADOS"
+            ],
+            "requiere_ocr_serial": False,
+            "contexto": {
+                "RIF": "VARIOS",
+                "AFILIADO": "",
+                "RAZON SOCIAL": "",
+            },
+        }
+
+    rif_detectado = rifs[0]
+
+    filtro = (
+        contratos["RIF"]
+        .apply(normalizar_texto)
+        == rif_detectado
+    )
+
+    candidatos = contratos[
+        filtro
+    ].copy()
+
+    contexto = obtener_contexto(
+        candidatos
+    )
+
+    # =====================================================
+    # 3. RIF UNICO
+    # =====================================================
+
+    if len(candidatos) == 1:
+
+        indice = candidatos.index[0]
+
+        return {
+            "estado": "ENCONTRADO",
+            "puntos": 50,
+            "indice": indice,
+            "coincidencias": [
+                "RIF UNICO"
+            ],
+            "requiere_ocr_serial": False,
+            "contexto": contexto,
+        }
+
+    # =====================================================
+    # 4. RIF REPETIDO - PRIMER INTENTO
+    # =====================================================
+
+    if not segundo_intento:
+
+        return {
+            "estado": "REVISAR",
+            "puntos": 20,
+            "indice": None,
+            "coincidencias": [
+                "RIF REPETIDO - BUSCANDO SERIAL"
+            ],
+            "requiere_ocr_serial": True,
+            "contexto": contexto,
+        }
+
+    # =====================================================
+    # 5. SEGUNDO INTENTO:
+    #    BUSCAR SERIAL EXACTO SOLO ENTRE ESE RIF
+    # =====================================================
+
+    seriales_rif = buscar_serial_exacto(
+        candidatos,
+        texto_documento,
+        nombre_archivo,
+    )
+
+    if len(seriales_rif) == 1:
+
+        indice = seriales_rif[0]
+
+        return {
+            "estado": "ENCONTRADO",
+            "puntos": 100,
+            "indice": indice,
+            "coincidencias": [
+                "RIF + SERIAL EXACTO"
+            ],
+            "requiere_ocr_serial": False,
+            "contexto": contexto,
+        }
+
+    # =====================================================
+    # 6. ULTIMOS CARACTERES
+    # =====================================================
+
+    resultado_final = buscar_final_serial(
+        candidatos,
+        texto_documento
+    )
+
+    if resultado_final is not None:
+
+        indice = resultado_final[
+            "indice"
+        ]
+
+        cantidad = resultado_final[
+            "cantidad"
+        ]
+
+        return {
+            "estado": "ENCONTRADO",
+            "puntos": 80 + cantidad,
+            "indice": indice,
+            "coincidencias": [
+                f"RIF + ULTIMOS {cantidad} SERIAL"
+            ],
+            "requiere_ocr_serial": False,
+            "contexto": contexto,
+        }
+
+    # =====================================================
+    # 7. SERIAL PROBABLE
+    # =====================================================
+
+    probable = buscar_serial_probable(
+        candidatos,
+        texto_documento
+    )
+
+    if probable is not None:
+
+        indice = probable[
+            "indice"
+        ]
+
+        porcentaje = round(
+            probable[
+                "similitud"
+            ]
+            * 100
         )
 
         return {
             "estado": "REVISAR",
-            "puntos": mejor["puntos"],
-            "indice": None,
+            "puntos": porcentaje,
+            "indice": indice,
             "coincidencias": [
-                "AFILIADO - SERIAL NO IDENTIFICADO"
+                f"RIF + SERIAL PROBABLE {porcentaje}%"
             ],
-            "serial_similitud": 0,
+            "requiere_ocr_serial": False,
+            "contexto": contexto,
         }
 
-
     # =====================================================
-    # 3. RIF
-    # =====================================================
-
-    candidatos_rif = [
-        candidato
-        for candidato in candidatos
-        if candidato["rif_encontrado"]
-    ]
-
-
-    # -----------------------------------------------------
-    # SOLO UNA TERMINAL CON ESE RIF
-    # -----------------------------------------------------
-
-    if len(candidatos_rif) == 1:
-
-        mejor = candidatos_rif[0]
-
-        return {
-            "estado": "ENCONTRADO",
-            "puntos": mejor["puntos"],
-            "indice": mejor["indice"],
-            "coincidencias": [
-                "RIF ÚNICO"
-            ],
-            "serial_similitud": 0,
-        }
-
-
-    # -----------------------------------------------------
-    # MISMO RIF EN VARIAS TERMINALES
-    # -----------------------------------------------------
-
-    if len(candidatos_rif) > 1:
-
-        mejor = max(
-            candidatos_rif,
-            key=lambda x: x["puntos"]
-        )
-
-        return {
-            "estado": "REVISAR",
-            "puntos": mejor["puntos"],
-
-            # No asignamos ninguna terminal
-            # porque no sabemos cuál serial corresponde
-            "indice": None,
-
-            "coincidencias": [
-                "RIF - SERIAL NO IDENTIFICADO"
-            ],
-
-            "serial_similitud": 0,
-        }
-
-
-    # =====================================================
-    # 4. NO ENCONTRADO
+    # 8. NO LOGRAMOS LEER SERIAL
     # =====================================================
 
     return {
-        "estado": "NO ENCONTRADO",
-        "puntos": 0,
+        "estado": "REVISAR",
+        "puntos": 20,
         "indice": None,
-        "coincidencias": [],
-        "serial_similitud": 0,
+        "coincidencias": [
+            "RIF DETECTADO - SERIAL NO DETECTADO"
+        ],
+        "requiere_ocr_serial": False,
+        "contexto": contexto,
     }

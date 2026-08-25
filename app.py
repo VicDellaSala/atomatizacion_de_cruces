@@ -13,6 +13,7 @@ from modules.excel_reader import (
 
 from modules.document_reader import (
     leer_documento,
+    leer_serial_documento,
 )
 
 from modules.matcher import (
@@ -21,18 +22,17 @@ from modules.matcher import (
 
 
 # =========================================================
-# CONFIGURACIÓN
+# CONFIGURACION
 # =========================================================
 
 st.set_page_config(
-    page_title="Automatización de Cruces",
+    page_title="Automatizacion de Cruces",
     page_icon="📄",
     layout="wide",
 )
 
-
 st.title(
-    "📄 Automatización de Cruces de Contratos"
+    "📄 Automatizacion de Cruces de Contratos"
 )
 
 st.write(
@@ -63,7 +63,10 @@ st.header("1. Cargar base de datos")
 
 excel_file = st.file_uploader(
     "Selecciona el archivo Excel",
-    type=["xlsx", "xls"],
+    type=[
+        "xlsx",
+        "xls",
+    ],
     key="excel_file",
 )
 
@@ -85,25 +88,27 @@ if excel_file is not None:
             f"{excel_file.name}"
         )
 
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(
+            2
+        )
 
         with col1:
 
             st.metric(
                 "Filas totales",
-                resumen["filas_totales"],
+                resumen[
+                    "filas_totales"
+                ],
             )
 
         with col2:
 
             st.metric(
-                "Afiliados únicos",
-                resumen["afiliados_unicos"],
+                "Afiliados unicos",
+                resumen[
+                    "afiliados_unicos"
+                ],
             )
-
-        # -----------------------------------------
-        # SELECCIONAR CANAL
-        # -----------------------------------------
 
         st.subheader(
             "Seleccionar agente autorizado"
@@ -136,13 +141,17 @@ if excel_file is not None:
                 f"{canal_seleccionado}"
             )
 
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3 = st.columns(
+                3
+            )
 
             with col1:
 
                 st.metric(
                     "Filas originales",
-                    len(df_canal),
+                    len(
+                        df_canal
+                    ),
                 )
 
             with col2:
@@ -157,13 +166,18 @@ if excel_file is not None:
             with col3:
 
                 st.metric(
-                    "SIM CARD ignoradas para conteo",
-                    len(df_canal)
-                    - len(contratos_reales),
+                    "SIM CARD ignoradas",
+                    len(
+                        df_canal
+                    )
+                    - len(
+                        contratos_reales
+                    ),
                 )
 
             with st.expander(
-                f"Ver contratos de {canal_seleccionado}"
+                f"Ver contratos de "
+                f"{canal_seleccionado}"
             ):
 
                 st.dataframe(
@@ -174,7 +188,7 @@ if excel_file is not None:
         else:
 
             st.error(
-                "No se encontró la columna CANAL."
+                "No se encontro la columna CANAL."
             )
 
     except Exception as e:
@@ -188,10 +202,12 @@ st.divider()
 
 
 # =========================================================
-# 2. CONTRATOS
+# 2. CARGAR CONTRATOS
 # =========================================================
 
-st.header("2. Cargar contratos")
+st.header(
+    "2. Cargar contratos"
+)
 
 
 if canal_seleccionado:
@@ -242,25 +258,15 @@ if archivos_subidos:
     ]
 
     st.success(
-        f"{len(contract_files)} contratos válidos cargados."
+        f"{len(contract_files)} contratos validos cargados."
     )
 
     if archivos_ignorados:
 
         st.info(
             f"{len(archivos_ignorados)} archivos "
-            f"temporales o no compatibles fueron ignorados."
+            f"temporales fueron ignorados."
         )
-
-    with st.expander(
-        "Ver archivos de contratos"
-    ):
-
-        for archivo in contract_files:
-
-            st.write(
-                f"📄 {archivo.name}"
-            )
 
 
 st.divider()
@@ -270,9 +276,13 @@ st.divider()
 # 3. RESUMEN
 # =========================================================
 
-st.header("3. Resumen")
+st.header(
+    "3. Resumen"
+)
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3 = st.columns(
+    3
+)
 
 
 with col1:
@@ -298,7 +308,9 @@ with col2:
 
     st.metric(
         "Contratos cargados",
-        len(contract_files),
+        len(
+            contract_files
+        ),
     )
 
 
@@ -307,7 +319,9 @@ with col3:
     if df_canal is not None:
 
         diferencia = (
-            len(contract_files)
+            len(
+                contract_files
+            )
             - contar_contratos_reales(
                 df_canal
             )
@@ -330,14 +344,16 @@ st.divider()
 
 
 # =========================================================
-# 4. VALIDACIÓN
+# 4. VALIDACION
 # =========================================================
 
-st.header("4. Validar contratos")
+st.header(
+    "4. Validar contratos"
+)
 
 
 if st.button(
-    "🔍 Iniciar validación",
+    "🔍 Iniciar validacion",
     type="primary",
     use_container_width=True,
 ):
@@ -360,7 +376,9 @@ if st.button(
 
         contratos_encontrados = set()
 
-        progreso = st.progress(0)
+        progreso = st.progress(
+            0
+        )
 
         estado_proceso = st.empty()
 
@@ -368,29 +386,75 @@ if st.button(
             contract_files
         )
 
+
         for numero, archivo in enumerate(
             contract_files,
             start=1
         ):
 
-            estado_proceso.write(
-                f"Procesando {numero} de {total}: "
-                f"{archivo.name}"
-            )
-
             try:
+
+                # =========================================
+                # PRIMER OCR RAPIDO
+                # =========================================
+
+                estado_proceso.write(
+                    f"Procesando {numero} de {total}: "
+                    f"{archivo.name} - lectura inicial"
+                )
 
                 texto = leer_documento(
                     archivo
                 )
 
-                resultado = (
-                    buscar_mejor_coincidencia(
-                        df_canal,
-                        texto,
-                        archivo.name,
-                    )
+                resultado = buscar_mejor_coincidencia(
+                    df_canal,
+                    texto,
+                    archivo.name,
+                    segundo_intento=False,
                 )
+
+
+                # =========================================
+                # RIF REPETIDO:
+                # SEGUNDO OCR SOLO PARA SERIAL
+                # =========================================
+
+                if resultado.get(
+                    "requiere_ocr_serial",
+                    False
+                ):
+
+                    estado_proceso.write(
+                        f"Procesando {numero} de {total}: "
+                        f"{archivo.name} - buscando serial"
+                    )
+
+                    texto_serial = (
+                        leer_serial_documento(
+                            archivo
+                        )
+                    )
+
+                    texto_completo = (
+                        texto
+                        + "\n"
+                        + texto_serial
+                    )
+
+                    resultado = (
+                        buscar_mejor_coincidencia(
+                            df_canal,
+                            texto_completo,
+                            archivo.name,
+                            segundo_intento=True,
+                        )
+                    )
+
+
+                # =========================================
+                # OBTENER FILA
+                # =========================================
 
                 indice = resultado[
                     "indice"
@@ -401,17 +465,30 @@ if st.button(
                 if indice is not None:
 
                     fila_excel = (
-                        df_canal.loc[indice]
+                        df_canal.loc[
+                            indice
+                        ]
                     )
 
                     contratos_encontrados.add(
                         indice
                     )
 
+
+                # =========================================
+                # DATOS A MOSTRAR
+                # =========================================
+
+                contexto = resultado.get(
+                    "contexto",
+                    {}
+                )
+
                 afiliado = ""
                 rif = ""
                 razon_social = ""
                 serial = ""
+
 
                 if fila_excel is not None:
 
@@ -443,16 +520,48 @@ if st.button(
                         )
                     )
 
+                else:
+
+                    afiliado = contexto.get(
+                        "AFILIADO",
+                        ""
+                    )
+
+                    rif = contexto.get(
+                        "RIF",
+                        ""
+                    )
+
+                    razon_social = contexto.get(
+                        "RAZON SOCIAL",
+                        ""
+                    )
+
+                    if rif:
+
+                        serial = (
+                            "NO SE PUDO DETECTAR"
+                        )
+
+
+                # =========================================
+                # GUARDAR RESULTADO
+                # =========================================
+
                 resultados.append(
                     {
                         "ARCHIVO":
                             archivo.name,
 
                         "ESTADO":
-                            resultado["estado"],
+                            resultado[
+                                "estado"
+                            ],
 
                         "PUNTOS":
-                            resultado["puntos"],
+                            resultado[
+                                "puntos"
+                            ],
 
                         "COINCIDENCIAS":
                             ", ".join(
@@ -474,6 +583,7 @@ if st.button(
                             serial,
                     }
                 )
+
 
             except Exception as e:
 
@@ -505,24 +615,27 @@ if st.button(
                     }
                 )
 
+
             progreso.progress(
                 numero / total
             )
 
+
         estado_proceso.empty()
 
         st.success(
-            "Validación terminada."
+            "Validacion terminada."
         )
+
+
+        # =================================================
+        # DATAFRAME RESULTADOS
+        # =================================================
 
         df_resultados = pd.DataFrame(
             resultados
         )
 
-
-        # =========================================
-        # CONTADORES
-        # =========================================
 
         encontrados = (
             df_resultados[
@@ -553,9 +666,10 @@ if st.button(
         ).sum()
 
 
-        col1, col2, col3, col4 = (
-            st.columns(4)
+        col1, col2, col3, col4 = st.columns(
+            4
         )
+
 
         with col1:
 
@@ -564,6 +678,7 @@ if st.button(
                 encontrados,
             )
 
+
         with col2:
 
             st.metric(
@@ -571,12 +686,14 @@ if st.button(
                 revisar,
             )
 
+
         with col3:
 
             st.metric(
                 "❌ No encontrados",
                 no_encontrados,
             )
+
 
         with col4:
 
@@ -586,9 +703,9 @@ if st.button(
             )
 
 
-        # =========================================
-        # TABLA DE RESULTADOS
-        # =========================================
+        # =================================================
+        # RESULTADOS
+        # =================================================
 
         st.subheader(
             "Resultados"
@@ -600,15 +717,16 @@ if st.button(
         )
 
 
-        # =========================================
-        # CONTRATOS DEL EXCEL SIN DOCUMENTO
-        # =========================================
+        # =================================================
+        # FALTANTES
+        # =================================================
 
         contratos_excel = (
             obtener_contratos_reales(
                 df_canal
             )
         )
+
 
         indices_faltantes = [
             indice
@@ -617,6 +735,7 @@ if st.button(
             if indice
             not in contratos_encontrados
         ]
+
 
         df_faltantes = (
             contratos_excel.loc[
@@ -631,8 +750,11 @@ if st.button(
 
         st.metric(
             "Faltantes",
-            len(df_faltantes),
+            len(
+                df_faltantes
+            ),
         )
+
 
         if not df_faltantes.empty:
 
@@ -661,5 +783,5 @@ if st.button(
 st.divider()
 
 st.caption(
-    "Sistema de validación y cruce de contratos."
+    "Sistema de validacion y cruce de contratos."
 )
