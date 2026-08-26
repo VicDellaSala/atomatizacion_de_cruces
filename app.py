@@ -52,7 +52,9 @@ st.divider()
 df = None
 df_canal = None
 canal_seleccionado = None
+
 contract_files = []
+archivos_ignorados = []
 
 
 # =========================================================
@@ -109,6 +111,10 @@ if excel_file is not None:
                     "afiliados_unicos"
                 ],
             )
+
+        # -----------------------------------------
+        # CANAL
+        # -----------------------------------------
 
         st.subheader(
             "Seleccionar agente autorizado"
@@ -265,8 +271,18 @@ if archivos_subidos:
 
         st.info(
             f"{len(archivos_ignorados)} archivos "
-            f"temporales fueron ignorados."
+            f"temporales o no compatibles fueron ignorados."
         )
+
+    with st.expander(
+        "Ver archivos cargados"
+    ):
+
+        for archivo in contract_files:
+
+            st.write(
+                f"📄 {archivo.name}"
+            )
 
 
 st.divider()
@@ -376,6 +392,9 @@ if st.button(
 
         contratos_encontrados = set()
 
+        # Archivos validos que fallaron
+        archivos_descartados = []
+
         progreso = st.progress(
             0
         )
@@ -395,7 +414,7 @@ if st.button(
             try:
 
                 # =========================================
-                # PRIMER OCR RAPIDO
+                # PRIMER OCR
                 # =========================================
 
                 estado_proceso.write(
@@ -407,11 +426,13 @@ if st.button(
                     archivo
                 )
 
-                resultado = buscar_mejor_coincidencia(
-                    df_canal,
-                    texto,
-                    archivo.name,
-                    segundo_intento=False,
+                resultado = (
+                    buscar_mejor_coincidencia(
+                        df_canal,
+                        texto,
+                        archivo.name,
+                        segundo_intento=False,
+                    )
                 )
 
 
@@ -453,7 +474,7 @@ if st.button(
 
 
                 # =========================================
-                # OBTENER FILA
+                # FILA IDENTIFICADA
                 # =========================================
 
                 indice = resultado[
@@ -490,6 +511,10 @@ if st.button(
                 serial = ""
 
 
+                # -----------------------------------------
+                # TERMINAL IDENTIFICADA
+                # -----------------------------------------
+
                 if fila_excel is not None:
 
                     afiliado = normalizar_texto(
@@ -520,6 +545,10 @@ if st.button(
                         )
                     )
 
+                # -----------------------------------------
+                # CLIENTE IDENTIFICADO PERO NO TERMINAL
+                # -----------------------------------------
+
                 else:
 
                     afiliado = contexto.get(
@@ -545,7 +574,7 @@ if st.button(
 
 
                 # =========================================
-                # GUARDAR RESULTADO
+                # RESULTADO
                 # =========================================
 
                 resultados.append(
@@ -585,7 +614,25 @@ if st.button(
                 )
 
 
+            # =============================================
+            # ARCHIVO CORRUPTO / ERROR OCR / ERROR LECTURA
+            # =============================================
+
             except Exception as e:
+
+                mensaje_error = str(
+                    e
+                )
+
+                archivos_descartados.append(
+                    {
+                        "ARCHIVO":
+                            archivo.name,
+
+                        "MOTIVO":
+                            mensaje_error,
+                    }
+                )
 
                 resultados.append(
                     {
@@ -599,7 +646,7 @@ if st.button(
                             0,
 
                         "COINCIDENCIAS":
-                            str(e),
+                            mensaje_error,
 
                         "AFILIADO":
                             "",
@@ -698,7 +745,7 @@ if st.button(
         with col4:
 
             st.metric(
-                "Errores",
+                "🚫 Errores",
                 errores,
             )
 
@@ -718,7 +765,80 @@ if st.button(
 
 
         # =================================================
-        # FALTANTES
+        # ARCHIVOS CORRUPTOS / ERROR DE LECTURA
+        # =================================================
+
+        st.subheader(
+            "Archivos que requieren revision manual"
+        )
+
+        if archivos_descartados:
+
+            df_descartados = pd.DataFrame(
+                archivos_descartados
+            )
+
+            st.warning(
+                f"{len(df_descartados)} archivo(s) "
+                f"no pudieron procesarse correctamente."
+            )
+
+            st.dataframe(
+                df_descartados,
+                use_container_width=True,
+            )
+
+        else:
+
+            st.success(
+                "No hubo archivos con errores de lectura."
+            )
+
+
+        # =================================================
+        # ARCHIVOS IGNORADOS POR EXTENSION
+        # =================================================
+
+        st.subheader(
+            "Archivos ignorados de la carpeta"
+        )
+
+        if archivos_ignorados:
+
+            df_ignorados = pd.DataFrame(
+                {
+                    "ARCHIVO": [
+                        archivo.name
+                        for archivo
+                        in archivos_ignorados
+                    ],
+                    "MOTIVO": [
+                        "Extension no compatible"
+                        for archivo
+                        in archivos_ignorados
+                    ],
+                }
+            )
+
+            st.info(
+                f"{len(df_ignorados)} archivo(s) "
+                f"fueron ignorados antes del procesamiento."
+            )
+
+            st.dataframe(
+                df_ignorados,
+                use_container_width=True,
+            )
+
+        else:
+
+            st.success(
+                "No hubo archivos ignorados por extension."
+            )
+
+
+        # =================================================
+        # CONTRATOS DEL EXCEL SIN DOCUMENTO
         # =================================================
 
         contratos_excel = (
