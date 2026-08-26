@@ -1,57 +1,184 @@
 import pandas as pd
+import re
 
+
+# =========================================================
+# NORMALIZACION
+# =========================================================
 
 def normalizar_texto(valor):
     """
     Convierte cualquier valor a texto limpio y uniforme.
     """
+
     if pd.isna(valor):
         return ""
 
     texto = str(valor).strip().upper()
 
+    texto = texto.replace("\n", " ")
+    texto = re.sub(r"\s+", " ", texto)
+
+    # Excel a veces convierte identificadores a 123456.0
     if texto.endswith(".0"):
         texto = texto[:-2]
 
     return texto
 
 
+def normalizar_columna(valor):
+    """
+    Limpia nombres de columnas.
+    """
+
+    return normalizar_texto(valor).strip()
+
+
+# =========================================================
+# LEER EXCEL
+# =========================================================
+
 def leer_excel(archivo_excel):
     """
-    Lee preferiblemente la hoja VENTA.
+    Lee la hoja VENTA o VENTAS.
+
+    No importa en qué posición estén las columnas.
     """
 
-    try:
-        df = pd.read_excel(
-            archivo_excel,
-            sheet_name="VENTA"
-        )
-    except Exception:
-        df = pd.read_excel(archivo_excel)
-
-    # Normalizar encabezados
-    df.columns = [
-        normalizar_texto(columna)
-        for columna in df.columns
+    hojas_posibles = [
+        "VENTA",
+        "VENTAS",
     ]
 
-    return df
+    ultimo_error = None
 
+    for hoja in hojas_posibles:
+
+        try:
+
+            df = pd.read_excel(
+                archivo_excel,
+                sheet_name=hoja,
+                header=0,
+            )
+
+            # Limpiar nombres de columnas
+            df.columns = [
+                normalizar_columna(columna)
+                for columna in df.columns
+            ]
+
+            # Eliminar columnas totalmente vacias
+            df = df.dropna(
+                axis=1,
+                how="all"
+            )
+
+            # Eliminar filas totalmente vacias
+            df = df.dropna(
+                axis=0,
+                how="all"
+            )
+
+            df = df.reset_index(
+                drop=True
+            )
+
+            return df
+
+        except Exception as e:
+
+            ultimo_error = e
+
+    raise ValueError(
+        "No se encontro una hoja llamada VENTA ni VENTAS. "
+        f"Ultimo error: {ultimo_error}"
+    )
+
+
+# =========================================================
+# ENCONTRAR COLUMNA
+# =========================================================
+
+def encontrar_columna(
+    df,
+    nombre_objetivo
+):
+    """
+    Busca una columna sin importar su posicion.
+
+    Primero intenta coincidencia exacta.
+    Luego coincidencia parcial.
+    """
+
+    objetivo = normalizar_texto(
+        nombre_objetivo
+    )
+
+    # -----------------------------------------------------
+    # COINCIDENCIA EXACTA
+    # -----------------------------------------------------
+
+    for columna in df.columns:
+
+        columna_normalizada = normalizar_texto(
+            columna
+        )
+
+        if columna_normalizada == objetivo:
+
+            return columna
+
+    # -----------------------------------------------------
+    # COINCIDENCIA PARCIAL
+    # -----------------------------------------------------
+
+    for columna in df.columns:
+
+        columna_normalizada = normalizar_texto(
+            columna
+        )
+
+        if objetivo in columna_normalizada:
+
+            return columna
+
+    return None
+
+
+# =========================================================
+# COLUMNAS DISPONIBLES
+# =========================================================
 
 def obtener_columnas_disponibles(df):
-    return list(df.columns)
+    """
+    Devuelve todas las columnas encontradas.
+    """
 
+    return list(
+        df.columns
+    )
+
+
+# =========================================================
+# CANALES
+# =========================================================
 
 def obtener_canales(df):
     """
-    Obtiene todos los agentes/canales.
+    Devuelve los agentes/canales encontrados.
     """
 
-    if "CANAL" not in df.columns:
+    columna_canal = encontrar_columna(
+        df,
+        "CANAL"
+    )
+
+    if columna_canal is None:
         return []
 
     canales = (
-        df["CANAL"]
+        df[columna_canal]
         .apply(normalizar_texto)
     )
 
@@ -64,35 +191,57 @@ def obtener_canales(df):
     )
 
 
-def filtrar_por_canal(df, canal):
+def filtrar_por_canal(
+    df,
+    canal
+):
     """
-    Filtra únicamente el canal seleccionado.
+    Filtra el Excel por el canal seleccionado.
     """
 
-    if "CANAL" not in df.columns:
-        return df.copy()
+    columna_canal = encontrar_columna(
+        df,
+        "CANAL"
+    )
 
-    canal = normalizar_texto(canal)
+    if columna_canal is None:
+
+        return df.iloc[0:0].copy()
+
+    canal = normalizar_texto(
+        canal
+    )
 
     filtro = (
-        df["CANAL"]
+        df[columna_canal]
         .apply(normalizar_texto)
         == canal
     )
 
-    return df[filtro].copy()
+    return df[
+        filtro
+    ].copy()
 
+
+# =========================================================
+# AFILIADOS
+# =========================================================
 
 def obtener_afiliados_unicos(df):
     """
-    Obtiene los afiliados únicos.
+    Obtiene los afiliados unicos.
     """
 
-    if "AFILIADO" not in df.columns:
+    columna_afiliado = encontrar_columna(
+        df,
+        "AFILIADO"
+    )
+
+    if columna_afiliado is None:
         return []
 
     afiliados = (
-        df["AFILIADO"]
+        df[columna_afiliado]
         .apply(normalizar_texto)
     )
 
@@ -105,20 +254,29 @@ def obtener_afiliados_unicos(df):
     )
 
 
+# =========================================================
+# CONTRATOS REALES
+# =========================================================
+
 def obtener_contratos_reales(df):
     """
-    Obtiene solo las filas correspondientes
-    al equipo principal.
+    Las filas con TERMINAL = 0 corresponden a SIM CARD.
 
-    TERMINAL = 0 corresponde a SIM CARD
-    y NO cuenta como contrato separado.
+    No se eliminan del Excel original, pero no cuentan
+    como un contrato independiente.
     """
 
-    if "TERMINAL" not in df.columns:
+    columna_terminal = encontrar_columna(
+        df,
+        "TERMINAL"
+    )
+
+    if columna_terminal is None:
+
         return df.copy()
 
     terminal = pd.to_numeric(
-        df["TERMINAL"],
+        df[columna_terminal],
         errors="coerce"
     )
 
@@ -130,50 +288,143 @@ def obtener_contratos_reales(df):
 
 
 def contar_contratos_reales(df):
+    """
+    Cuenta solamente contratos reales.
+    """
+
     return len(
-        obtener_contratos_reales(df)
+        obtener_contratos_reales(
+            df
+        )
     )
 
 
+# =========================================================
+# RESUMEN GENERAL
+# =========================================================
+
 def obtener_resumen_excel(df):
-    afiliados = obtener_afiliados_unicos(df)
+    """
+    Genera resumen general del Excel.
+    """
+
+    afiliados = obtener_afiliados_unicos(
+        df
+    )
 
     return {
-        "filas_totales": len(df),
-        "afiliados_unicos": len(afiliados),
-        "lista_afiliados": afiliados,
-        "columnas": obtener_columnas_disponibles(df),
+        "filas_totales":
+            len(df),
+
+        "afiliados_unicos":
+            len(afiliados),
+
+        "lista_afiliados":
+            afiliados,
+
+        "columnas":
+            obtener_columnas_disponibles(
+                df
+            ),
     }
 
 
-def obtener_datos_contrato(df, indice):
+# =========================================================
+# CONTRATO POR AFILIADO
+# =========================================================
+
+def obtener_contrato_por_afiliado(
+    df,
+    afiliado
+):
     """
-    Obtiene los datos importantes de una fila
-    de contrato/equipo.
+    Obtiene todas las filas de un afiliado.
     """
 
-    fila = df.loc[indice]
+    columna_afiliado = encontrar_columna(
+        df,
+        "AFILIADO"
+    )
 
-    datos = {}
+    if columna_afiliado is None:
 
-    columnas_interes = [
-        "AFILIADO",
-        "CONCATENAR",
-        "RAZON SOCIAL",
-        "RIF",
-        "SERIAL",
-        "EQUIPO",
-        "PEDIDO",
-        "FACTURA",
-        "BANCO",
-        "TELEFONO",
-    ]
+        return pd.DataFrame()
 
-    for columna in columnas_interes:
+    afiliado = normalizar_texto(
+        afiliado
+    )
 
-        if columna in df.columns:
-            datos[columna] = normalizar_texto(
-                fila.get(columna, "")
-            )
+    filtro = (
+        df[columna_afiliado]
+        .apply(normalizar_texto)
+        == afiliado
+    )
 
-    return datos
+    return df[
+        filtro
+    ].copy()
+
+
+# =========================================================
+# AFILIADOS POR CANAL
+# =========================================================
+
+def obtener_afiliados_por_canal(
+    df,
+    canal
+):
+    """
+    Devuelve afiliados unicos de un canal.
+    """
+
+    df_canal = filtrar_por_canal(
+        df,
+        canal
+    )
+
+    return obtener_afiliados_unicos(
+        df_canal
+    )
+
+
+# =========================================================
+# RESUMEN DEL CANAL
+# =========================================================
+
+def obtener_resumen_canal(
+    df,
+    canal
+):
+    """
+    Genera resumen del canal seleccionado.
+    """
+
+    df_canal = filtrar_por_canal(
+        df,
+        canal
+    )
+
+    afiliados = obtener_afiliados_unicos(
+        df_canal
+    )
+
+    return {
+        "canal":
+            normalizar_texto(
+                canal
+            ),
+
+        "filas":
+            len(df_canal),
+
+        "contratos_reales":
+            contar_contratos_reales(
+                df_canal
+            ),
+
+        "afiliados_unicos":
+            len(afiliados),
+
+        "lista_afiliados":
+            afiliados,
+    }
